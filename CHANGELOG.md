@@ -136,6 +136,18 @@ The skill-delete feature in commit `76d531b` was reviewed by the `code-reviewer`
 
 - **Defense-in-depth gate at `/skill-name` invocation site** (part of `76d531b`): Verified that `NativelyInterface.tsx:3838`'s `onGeminiStreamError` handler already calls `flushToken()` + `setIsProcessing(false)` + clears `chatStreamIdRef` (and `inputValue` is cleared on submit at line 4176 BEFORE the IPC call), so the disabled-skill error path leaves no stale chat-panel state. No fix needed; documented for the next reviewer.
 
+#### UX Polish
+
+- **Replace `window.confirm()` with inline two-step confirmation** (`<commit TBD>`): The original delete handler popped a system `confirm()` dialog — jarring in an otherwise modern settings panel (drop-target depth tracking, byte-counted preview card, animated file-tree disclosure) and a pattern that no other settings panel in the app uses (`PhoneMirrorSettings`, `LocalWhisperModelPanel`, `AIProvidersSettings` all use either inline confirm or a soft-delete pattern). Fixed by replacing the system dialog with an inline two-step confirmation row:
+  - **First click on the trash icon** → row enters "confirm mode". The trash icon is replaced inline with a `Cancel` button + a red `Delete this skill` button, with the skill name echoed next to them ("Delete code-simplifier?"). Both buttons are *always visible* (no hover-reveal) because the user has already committed to the action.
+  - **Second click on the red Delete** → invokes `skillsDelete` IPC (with the per-skill `deletingIds` in-flight guard + banner hygiene from the senior review still in place).
+  - **Escape key** dismisses the confirm — `useEffect` keydown listener attached only while `confirmingId` is non-null.
+  - **6s auto-cancel** if the user walks away mid-confirm — `setTimeout` cleared on commit + on manual cancel, so a fast user never sees the row snap out of confirm mode unexpectedly.
+  - **Only one row can be in confirm mode at a time** (single `confirmingId: string | null` state, not per-row booleans) — matches the user's mental model and prevents the visual confusion of two rows waiting simultaneously.
+  - **`aria-live="polite"` on the confirm group** so screen readers announce the new controls when the row enters confirm mode. `role="group"` + `aria-label="Confirm delete <name>"` give explicit context.
+  - **Per-button `disabled={deletingIds.has(skill.id)}`** during the actual delete + label flips to "Deleting…" so the user gets visual feedback that the action is in flight (closes the existing TOCTOU window between click and IPC return).
+  - **Test surface updated** in `SkillsIpcWiring.test.mjs`: swapped the positive `window\.confirm\([^)]*Delete/` assertion for three — `doesNotMatch` on the system dialog, positive match for `confirmingId` state machinery, positive match for the "Delete this skill" inline button. `Trash2` lookahead relaxed from 1600 → 6000 chars to accommodate the larger inline confirm block nested under the same conditional. 21/21 pass.
+
 ### Crash & Launch Fixes (2026-07-06)
 
 Black-screen and silent-crash debugging pass on the `hardening/v2.7.0` branch, traced from the user's `MEASURE_LATENCY=true npm start` log. Three distinct root causes, all fixed and verified via Chrome DevTools Protocol.

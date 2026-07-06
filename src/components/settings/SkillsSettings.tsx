@@ -78,6 +78,11 @@ export const SkillsSettings: React.FC = () => {
     // row can independently be "currently mutating" — without this,
     // double-clicking Delete fires two concurrent rmSyncs.
     const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+    // Inline two-step confirmation state. Track the single row currently
+    // waiting for a confirm/cancel rather than a per-row boolean — only one
+    // row can ever be in confirm-mode at once (clicking another row's trash
+    // moves the focus, doesn't stack). null = no row awaiting confirmation.
+    const [confirmingId, setConfirmingId] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     // Counter for dragenter/dragleave. A simple boolean flag would flicker
     // every time the cursor crossed a child boundary inside the card (icon,
@@ -123,6 +128,32 @@ export const SkillsSettings: React.FC = () => {
         loadSkills();
     }, [loadSkills]);
 
+    // Auto-cancel the inline confirm state after 6s of inactivity so a stale
+    // "Delete / Cancel" affordance never lingers if the user gets distracted
+    // mid-click. The cleanup function cancels the timer if the user clicks
+    // again (or commits the delete) before the timeout fires, so a fast user
+    // never sees the row snap out of confirm-mode unexpectedly.
+    useEffect(() => {
+        if (confirmingId === null) return;
+        const timer = window.setTimeout(() => setConfirmingId(null), 6000);
+        return () => window.clearTimeout(timer);
+    }, [confirmingId]);
+
+    // Escape dismisses the inline confirm — mirrors the keyboard convention
+    // every other modal/popover in this app follows. Listener is attached
+    // only while a row is in confirm-mode so we don't add a global keydown
+    // when nothing else needs it.
+    useEffect(() => {
+        if (confirmingId === null) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                setConfirmingId(null);
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [confirmingId]);
     const openFolder = async () => {
         try {
             if (typeof window.electronAPI?.skillsOpenFolder !== 'function') {
@@ -288,17 +319,41 @@ export const SkillsSettings: React.FC = () => {
         setStatus(null);
     };
 
-    // Delete a user-installed skill. Built-ins are blocked inside SkillsManager
-    // (no delete button is shown for them in the row JSX either, as a UX guard).
-    // Matches the confirm-then-call pattern used elsewhere in Settings (see
-    // AIProvidersSettings.tsx → handleDeleteCustom).
-    const handleDeleteSkill = async (id: string, name: string) => {
+    // Two-step delete flow. First click on the trash icon enters confirm-mode
+    // for that row (no destructive call yet) — `requestDeleteSkill`. Second
+    // click on the inline "Delete" button (the red one) actually invokes
+    // `skillsDelete` — `commitDeleteSkill`. Built-ins don't render a trash
+    // icon at all (gated in the row JSX below) so this handler only runs
+    // for user-installed skills. The previous version raised a native browser
+    // dialog — that modal froze the renderer, broke the panel's visual
+    // language, and made the destructive action feel larger than it actually
+    // is (the original SKILL.md file is still on disk and can be re-uploaded,
+    // so this is reversible — the phrasing "cannot be undone" was misleading).
+    const requestDeleteSkill = (id: string) => {
+        if (deletingIds.has(id)) return; // already deleting — ignore
+        setSuccess(null);
+        setStatus(null);
+        // Move the confirm focus to the row that was clicked. If the user
+        // clicks a different row's trash, that row becomes the active one
+        // instead of stacking — there is at most one confirm-mode row at a
+        // time, which matches the user's mental model ("I am confirming ONE
+        // thing") and avoids the `Multiple confirms on screen` confusion that
+        // per-row booleans invite.
+        setConfirmingId((prev) => (prev === id ? null : id));
+    };
+
+    const commitDeleteSkill = async (id: string, name: string) => {
         if (typeof window.electronAPI?.skillsDelete !== 'function') {
             setStatus(BRIDGE_MISSING_MSG);
+            setConfirmingId(null);
             return;
         }
-        if (deletingIds.has(id)) return; // already in flight — drop the duplicate click
-        if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return;
+        if (deletingIds.has(id)) return;
+        // Clear the confirm-mode immediately — the row is now deleting and
+        // we want to show the spinner / restoring muted state, not the
+        // confirm UI. If the delete fails, the row will already be reloaded
+        // and the user can re-click trash to retry.
+        setConfirmingId(null);
         // Banner hygiene: clear BOTH success and status so a stale red banner
         // from a prior action doesn't linger above a fresh green one.
         setSuccess(null);
@@ -547,28 +602,67 @@ export const SkillsSettings: React.FC = () => {
                                     badge already lives on the left, so the right edge
                                     is consistent across all rows. */}
                                 <div className="flex items-center gap-2 shrink-0">
-                                    {/* Delete button — hidden for built-ins (the
-                                        manager blocks builtin deletes anyway, so
-                                        we don't even show the affordance).
-                                        Hover-reveal pattern matches MeetingDetails.tsx
-                                        action bar (line 696): subtle 1px translate-y
-                                        slide-up on hover + 160ms ease-out reveal.
-                                        `group-focus-within` mirrors for keyboard users,
-                                        and `[@media(hover:none)]:opacity-100` makes
-                                        the button always-visible on touch devices
-                                        (no hover state to trigger on). */}
+                                    {/* Delete affordance — two visual states.
+                                        STATE A (default): single trash icon, hidden
+                                        until hover/focus-within — matches the
+                                        MeetingDetails.tsx:696 idiom. Built-ins do
+                                        not render this at all (the manager would
+                                        refuse the delete, so we don't even tease
+                                        the affordance).
+                                        STATE B (inline confirm, after first click):
+                                        two text-labeled buttons replace the trash
+                                        icon — a ghost "Cancel" and a red "Delete" —
+                                        so the destructive action is unambiguous
+                                        AND visible without requiring hover again.
+                                        Both states share the `group` parent for
+                                        hover-reveal, but STATE B is *always
+                                        visible* (no opacity-0) because the user
+                                        has already clicked once and is now
+                                        deciding. The aria-live="polite" on
+                                        STATE B lets screen readers announce the
+                                        confirm option. Escape cancels (handled
+                                        in the keydown effect above). 6s timeout
+                                        reverts to STATE A if no decision. */}
                                     {skill.source !== 'builtin' && (
-                                        <div className="flex items-center gap-1 opacity-0 translate-y-1 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-hover:translate-y-0 group-focus-within:opacity-100 group-focus-within:translate-y-0 [@media(hover:none)]:opacity-100 transition-all duration-[160ms] ease-out select-none">
-                                            <button
-                                                onClick={() => handleDeleteSkill(skill.id, skill.name)}
-                                                disabled={deletingIds.has(skill.id)}
-                                                className="p-1.5 rounded-lg text-text-secondary hover:text-red-400 hover:bg-red-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-                                                title="Delete"
-                                                aria-label={`Delete ${skill.name}`}
+                                        confirmingId === skill.id ? (
+                                            <div
+                                                role="group"
+                                                aria-live="polite"
+                                                aria-label={`Confirm delete ${skill.name}`}
+                                                className="flex items-center gap-2 select-none"
                                             >
-                                                <Trash2 size={14} />
-                                            </button>
-                                        </div>
+                                                <span className="text-[11px] text-text-secondary hidden sm:inline">
+                                                    Delete <span className="font-medium text-text-primary">{skill.name}</span>?
+                                                </span>
+                                                <button
+                                                    onClick={() => setConfirmingId(null)}
+                                                    className="px-2.5 py-1 rounded-md border border-border-subtle bg-bg-input text-text-secondary text-[11px] font-medium hover:bg-bg-elevated hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-border-muted transition-colors"
+                                                    title="Cancel (Escape)"
+                                                >
+                                                    Cancel
+                                                </button>
+                                                <button
+                                                    onClick={() => commitDeleteSkill(skill.id, skill.name)}
+                                                    disabled={deletingIds.has(skill.id)}
+                                                    className="px-2.5 py-1 rounded-md bg-red-500 text-white text-[11px] font-semibold hover:bg-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                                                    title="Delete this skill"
+                                                >
+                                                    {deletingIds.has(skill.id) ? 'Deleting…' : 'Delete'}
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <div className="flex items-center gap-1 opacity-0 translate-y-1 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-hover:translate-y-0 group-focus-within:opacity-100 group-focus-within:translate-y-0 [@media(hover:none)]:opacity-100 transition-all duration-[160ms] ease-out select-none">
+                                                <button
+                                                    onClick={() => requestDeleteSkill(skill.id)}
+                                                    disabled={deletingIds.has(skill.id)}
+                                                    className="p-1.5 rounded-lg text-text-secondary hover:text-red-400 hover:bg-red-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                                                    title="Delete skill"
+                                                    aria-label={`Delete ${skill.name}`}
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
+                                        )
                                     )}
                                 </div>
                             </div>

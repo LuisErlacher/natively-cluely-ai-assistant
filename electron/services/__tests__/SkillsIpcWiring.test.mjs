@@ -449,9 +449,21 @@ test('SkillsSettings renderer guards the skillsDelete bridge and renders delete 
   // Unconditional call after guard.
   assert.match(view, /await window\.electronAPI\.skillsDelete\(/);
 
-  // Confirmation UX matches AIProvidersSettings.tsx (no reusable dialog component
-  // exists in this repo) — plain window.confirm.
-  assert.match(view, /window\.confirm\([^)]*Delete/);
+  // Confirmation UX — inline two-step confirm replaces the prior blocking
+  // system dialog (which froze the renderer and broke the panel's visual
+  // language). The first click on the trash icon sets confirmingId, the
+  // second click on the inline red Delete button (rendered only when
+  // confirmingId === id) calls commitDeleteSkill. Both halves must be
+  // present so future contributors don't reintroduce the system dialog
+  // or break the affordance.
+  assert.doesNotMatch(view, /\bconfirm\s*\(/,
+    'SkillsSettings must NOT use the system blocking dialog — inline two-step UX replaces it');
+  assert.match(view, /confirmingId/,
+    'SkillsSettings must track which row is in confirm-mode');
+  // The inline Delete confirm button title (rendered when confirmingId
+  // matches) — the destructive commit button.
+  assert.match(view, /Delete this skill/,
+    'SkillsSettings must render an inline red Delete button while in confirm-mode');
 
   // UI affordance — Trash2 icon button only.
   assert.match(view, /Trash2/, 'must import Trash2 from lucide-react for the delete affordance');
@@ -480,10 +492,14 @@ test('SkillsSettings renderer guards the skillsDelete bridge and renders delete 
     /\[@media\(hover:none\)\]:opacity-100/,
     'delete button must be always-visible on touch devices (no hover state) — meets the same a11y baseline as MeetingDetails');
 
-  // Built-ins must NOT show a delete button — the manager blocks builtin
-  // deletes, so the UI shouldn't even offer the affordance.
+  // Built-ins must NOT show a delete affordance — the manager blocks builtin
+  // deletes, so the UI shouldn't even offer it. After the inline-confirm
+  // refactor the Trash2 icon is nested under the conditional ternary, so
+  // the lookahead grows from 1600→6000 chars (still well-bounded — a real
+  // regression would put an unconditional Trash2 in another branch entirely,
+  // and would obviously no longer follow the `!== 'builtin'` guard at all).
   assert.match(view,
-    /skill\.source\s*!==\s*['"]builtin['"][\s\S]{0,1600}Trash2/,
+    /skill\.source\s*!==\s*['"]builtin['"][\s\S]{0,6000}Trash2/,
     'delete button must be conditionally rendered (only for non-builtin skills)');
 });
 
