@@ -574,13 +574,21 @@ export const SkillsSettings: React.FC = () => {
                             className="group bg-bg-card rounded-lg border border-border-subtle px-3 py-2.5 hover:border-border-muted transition-colors"
                         >
                             <div className="flex items-center justify-between gap-3">
-                                {/* Left side: [Name] [/id] [Badge] — name + slug on
-                                    the left, Built-in/Local chip to the right of the
-                                    name (still on the LEFT half of the row, adjacent
-                                    to the name). The badge is anchored next to the
-                                    skill identifier rather than at the row edge so
-                                    it's readable at a glance. The right half is
-                                    reserved exclusively for the delete affordance. */}
+                                {/* Left side: [Name] [/id] — name + slug only.
+                                    The type pill (Built-in/Local) lives on the
+                                    RIGHT half of the row, immediately before
+                                    the delete affordance, to match the
+                                    standardized convention used by
+                                    AIProvidersSettings.tsx:1364-1370 (Ollama
+                                    model list — `LOCAL` pill at the right edge
+                                    before any actions) and
+                                    AIProvidersSettings.tsx:1553-1588 (Custom
+                                    providers list — actions anchored on the
+                                    right). Putting the pill in the same place
+                                    for every row of every "list of installed
+                                    things" settings panel means the user's
+                                    eye can find it without re-learning the
+                                    layout per panel. */}
                                 <div className="flex items-center gap-2 min-w-0">
                                     <span className="text-sm font-medium text-text-primary truncate">
                                         {skill.name}
@@ -588,6 +596,17 @@ export const SkillsSettings: React.FC = () => {
                                     <span className="text-[10px] font-mono text-text-tertiary shrink-0">
                                         /{skill.id}
                                     </span>
+                                </div>
+                                {/* Right side: [Badge] [Delete affordance] —
+                                    type pill first (so its position is
+                                    consistent across all rows, including
+                                    built-ins which have no delete button),
+                                    then the hover-reveal trash / inline
+                                    confirm. Built-in rows render the pill
+                                    only; user-installed rows render pill +
+                                    delete slot. The pill's slot never
+                                    moves regardless of `skill.source`. */}
+                                <div className="flex items-center gap-2 shrink-0">
                                     <span
                                         className={[
                                             'shrink-0 text-[11px] font-medium',
@@ -598,13 +617,6 @@ export const SkillsSettings: React.FC = () => {
                                     >
                                         {skill.source === 'builtin' ? 'Built-in' : 'Local'}
                                     </span>
-                                </div>
-                                {/* Right side: delete affordance only (no chip here).
-                                    Built-in rows show only the (invisible) delete
-                                    slot — the badge already sits next to the
-                                    name on the left, so the right edge stays
-                                    consistent across all rows. */}
-                                <div className="flex items-center gap-2 shrink-0">
                                     {/* Delete affordance — two visual states.
                                         STATE A (default): single trash icon, hidden
                                         until hover/focus-within — matches the
