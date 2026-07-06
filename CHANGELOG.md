@@ -12,6 +12,12 @@
 
     - **Prompt caching for Claude Opus 4.8**: `getClaudeCacheMinChars` now matches the whole `claude-opus-4-` family instead of enumerating point releases, so `claude-opus-4-8` uses the correct 4,096-token (16,384-char) cache minimum. It previously fell through to the generic 1,024-token floor, which silently disabled prompt caching for prompts between those two sizes.
 
+    - **Custom Provider (OpenRouter + any cURL gateway) reachable on the typed-chat and voice-Answer paths**: Fixed a regression where the live typed-chat and voice "Answer" cascade silently bypassed the user's configured Custom Provider. The chain now consults `configuredCustomProviders` (preserved across model selections in `setModel`) as a last-resort rung before the "No AI provider configured" throw, and also adds it as a fallback rung in the Natively TTFT race so it can win under the 2.5 s first-token budget. Previously, selecting any non-custom model (e.g. Gemini) caused `setModel` to null out `this.customProvider`, leaving a paid OpenRouter key unused even when every other cloud key was exhausted — the chain only consulted `streamChatWithGemini`'s offline-RAG path, which is never reached from the user's typed-chat or voice path. Both rungs are gated on `!isLocalOnlyMode` and `!(isMultimodal && imagePaths)` so local-only mode and image-bearing requests are unchanged.
+
+    - **DeepSeek 402 Insufficient Balance no longer retries 4–5× per chat**: `streamWithDeepseek` now catches permanent key/billing errors via the existing `isPermanentKeyError` classifier and flips a per-session `deepseekPermanentlyDead` breaker so the chain stops re-attempting the dead endpoint across rotations. The flag resets on either branch of `setDeepseekApiKey` (empty wipe + new key). A one-shot `deepseekSkipWarned` flag suppresses the "permanently disabled" log line so it doesn't spam every chat after the trip.
+
+    - **Tests**: Added `electron/services/__tests__/CustomProviderFallback2026_07_05.test.mjs` with 10 regression tests covering the new fallback chain (`setModel` preservation, picker logic for cloud/custom/empty-curlCommand/no-config cases, DeepSeek 402 breaker, both `setDeepseekApiKey` reset branches, and the `isLocalOnlyMode` gate).
+
     ### Code Review Fixes (2026-07-06)
 
 Hardening pass from a launch-log code review on the `hardening/v2.7.0` branch. Eight items: two CRITICAL, two HIGH, two MEDIUM, two LOW.
