@@ -91,13 +91,26 @@ The only real defect was in `classifyDocumentQuestionShape`: the definitional re
 
 Functional test on the 6 benchmark questions after the fix: Q1/Q3/Q4 → `list_answer`; Q2 → `definitional_answer` (was `lecture_answer`); Q5 → `exact_numeric_answer`; Q6 → `document_absent_fact_refusal`. Q2 now routes through `DOCUMENT_DEFINITION_TEMPLATE` and `requiredLayersFor` keeps `reference_files` required.
 
-#### Remaining gaps (not yet fixed, deferred)
+#### Source-isolation and WTA close-out (2026-07-06)
 
-- **WTA-path OKF augmentation depends on OKF packs being already generated.** The `KnowledgeManager.generateForFile` is async + single-flight; on the first WTA turn after a reference file is uploaded, the pack may not be ready and the augmentation falls through to chunk-only. The Tier-4 fallback (`assembleEvidence` returns `tier: 4`) covers the no-cards case but doesn't help if the user asks a synthesis question before the pack finishes generating. Mitigations: warm `generateForFile` at upload completion (already in place via `KnowledgeIndexQueue`).
-- **`docGroundedFalseRefusalRepair` is reachable on the manual path but still not wired into the WTA path** (`IntelligenceEngine.ts:1486+` validator stack has no false-refusal / completeness / off-topic validators for `lecture_answer`). Q6 (absent-fact) will still confabulate on WTA until a follow-up PR extends the WTA validator stack to call `detectIncompleteNumericAnswer` + the false-refusal gate.
-- **All regen paths reuse the same `docContextBlock`** (`ipcHandlers.ts:2552, :2568, :2579`). If the first pass missed the answer because Hybrid RAG returned wrong chunks, the regen misses it identically. Multi-value completions (Q4 objects list, Q5 GPU specs) cannot be recovered on retry.
-- **Cross-encoder ONNX cold-load on first WTA turn after mode activation** — `LocalReranker` is prewarmed at `prewarmModeReferenceIndex` time, but if the prewarm is skipped or fails silently, the first rerank call will hit cold-load latency. Verify `prewarmModeReferenceIndex` invokes `getLocalReranker()` for the first mode activation after app start.
-- **Behavioural test fixtures for the 6 benchmark questions** — none exist in the project's test suite. Add before the next fix PR to enable regression verification.
+Follow-up commit `27ab03a` closes the high-risk gaps from the seminar-mode architecture review and hardens all document-grounded custom modes, not just the original seminar fixture.
+
+- **Document-grounded WTA now validates and repairs answers instead of trusting the first generation.** `IntelligenceEngine` calls the document-grounded validator on WTA answers, attempts a bounded repair when the answer is incomplete, rejects repairs that invent numeric values not present in the evidence block, and fails closed with a safe refusal when the repair is still untrusted. This directly closes the prior gap where WTA could still confabulate on absent facts or partial numeric/list answers even though the manual path was better guarded. Regression coverage: `electron/llm/__tests__/DocGroundedCompleteness2026_07_05.test.mjs`.
+
+- **WTA retrieves by the planned/latest question, not by the whole transcript blob.** `WhatToAnswerLLM` now uses `answerPlan.question.trim() || cleanedTranscript` as the retrieval query. This prevents stale transcript context (profile projects, earlier answers, unrelated chat history) from pulling the retriever toward the wrong source when the active mode is a document-grounded custom mode.
+
+- **Forced document-grounded retrieval is hybrid-first again.** `ModesManager.buildRetrievedActiveModeContextBlockHybrid` no longer short-circuits `forceDocumentGrounding` to the lexical-only path. It tries `ModeHybridRetriever.retrieve(...)` first and falls back to lexical only when hybrid reports `usedFallback` or throws. `ModeHybridRetriever.retrieve` now accepts `forceDocumentGrounding`, builds the document identity block itself, and keeps the identity block gated to broad overview questions only so fact/list/definition questions rank precise chunks above abstract metadata. Regression coverage: `electron/services/__tests__/HybridDocumentGroundingPath.test.mjs`.
+
+- **Custom-mode source isolation is centralized and enforced.** New `customModeExecutionContract` logic defines which context layers each custom/document-grounded mode is allowed to use, suppressing profile/JD/resume/company/persona/custom-notes/coding-template leakage unless the active mode explicitly permits that source. This is the guard that prevents TalentScope/project/coding scaffold drift from leaking into seminar/thesis answers. Regression coverage: `electron/llm/__tests__/CustomModeSourceIsolation2026_07_06.test.mjs` and related WTA/source-isolation tests.
+
+- **Seminar fixture now tests realistic document-grounded behavior end-to-end.** `SeminarPresentationAssistant.test.mjs` covers 17 uploaded-thesis facts (main topic, OpenVLA/OpenVLA-OFT, AutoGen, Mercury X1 DOF/sensors, ROS#/Unity/Meta Quest 3/cameras, LoRA, Success Rate/MSE, project phases, semantic/prompt-complexity/self-awareness benchmarks), stale-profile drift isolation, deletion cleanup, binary-like noise, and prompt-injection wrapping. The focused suite is green: `npm run build:electron` plus `ELECTRON_RUN_AS_NODE=1 electron --test ...` reported **46/46 passing** for the document-grounding close-out set.
+
+- **Local ONNX/reranker worker hardening landed with the same pass.** Local embedding/rerank workers now isolate ONNX/transformers loading behind worker entrypoints, add thread/config hardening, and move bge-reranker assets to the download path instead of vendoring the huge tokenizer payload in the repo. This keeps the always-on rerank flags from turning first-use model loading into a live-answer stall.
+
+#### Remaining gaps (deferred)
+
+- **WTA-path OKF augmentation still depends on OKF packs being already generated.** The `KnowledgeManager.generateForFile` path is async + single-flight; on the first WTA turn after upload, the pack may not be ready and augmentation can fall through to chunk-only. Warm generation at upload/index completion remains the mitigation.
+- **First-token latency needs live smoke coverage under a cold local model cache.** The deterministic worker/reranker tests cover the code paths, but a packaged-app smoke should still verify that a completely cold bge/ONNX cache degrades to lexical within the WTA budget instead of blocking the live answer.
 
 ### Code Review Fixes (2026-07-06)
 
