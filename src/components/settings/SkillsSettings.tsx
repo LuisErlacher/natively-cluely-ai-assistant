@@ -574,12 +574,20 @@ export const SkillsSettings: React.FC = () => {
                             className="group bg-bg-card rounded-lg border border-border-subtle px-3 py-2.5 hover:border-border-muted transition-colors"
                         >
                             <div className="flex items-center justify-between gap-3">
-                                {/* Left side: [Badge] [Name] [/id] — the Built-in/Local
-                                    chip lives next to the name so EVERY row has the
-                                    same left-side structure regardless of source.
-                                    Built-in rows still render the chip in the same
-                                    position as Local rows. */}
+                                {/* Left side: [Name] [/id] [Badge] — name + slug on
+                                    the left, Built-in/Local chip to the right of the
+                                    name (still on the LEFT half of the row, adjacent
+                                    to the name). The badge is anchored next to the
+                                    skill identifier rather than at the row edge so
+                                    it's readable at a glance. The right half is
+                                    reserved exclusively for the delete affordance. */}
                                 <div className="flex items-center gap-2 min-w-0">
+                                    <span className="text-sm font-medium text-text-primary truncate">
+                                        {skill.name}
+                                    </span>
+                                    <span className="text-[10px] font-mono text-text-tertiary shrink-0">
+                                        /{skill.id}
+                                    </span>
                                     <span
                                         className={[
                                             'shrink-0 text-[11px] font-medium',
@@ -590,17 +598,12 @@ export const SkillsSettings: React.FC = () => {
                                     >
                                         {skill.source === 'builtin' ? 'Built-in' : 'Local'}
                                     </span>
-                                    <span className="text-sm font-medium text-text-primary truncate">
-                                        {skill.name}
-                                    </span>
-                                    <span className="text-[10px] font-mono text-text-tertiary shrink-0">
-                                        /{skill.id}
-                                    </span>
                                 </div>
-                                {/* Right side: delete button only (no chip). Built-in
-                                    rows show only the (invisible) delete slot — the
-                                    badge already lives on the left, so the right edge
-                                    is consistent across all rows. */}
+                                {/* Right side: delete affordance only (no chip here).
+                                    Built-in rows show only the (invisible) delete
+                                    slot — the badge already sits next to the
+                                    name on the left, so the right edge stays
+                                    consistent across all rows. */}
                                 <div className="flex items-center gap-2 shrink-0">
                                     {/* Delete affordance — two visual states.
                                         STATE A (default): single trash icon, hidden
