@@ -378,7 +378,11 @@ PHASE_STATUS.md
 meetily.md
 testengineer.prompt
 cluely/
-docs/
+# Ignore working design docs under docs/, but version the design record that the
+# source tree references: docs/context-os/** (cited by electron/**), and docs/adr/**.
+docs/*
+!docs/context-os/
+!docs/adr/
 
 # Large model binary files
 *.onnx
